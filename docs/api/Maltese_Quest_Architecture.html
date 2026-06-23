@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Maltese Quest Architecture</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 1000px;
+        margin: auto;
+        padding: 40px;
+        line-height: 1.6;
+        background: #fafafa;
+        color: #333
+      }
+
+      h1 {
+        color: #1F3864;
+        border-bottom: 2px solid #ddd
+      }
+
+      h2 {
+        color: #2E75B6
+      }
+
+      h3 {
+        color: #444
+      }
+
+      li {
+        margin: 6px 0
+      }
+    </style>
+  </head>
+  <body>
+    <h1>1. Purpose and Scope</h1>
+    <p>This document defines the technical architecture for Maltese Quest V1. It specifies the logical modules, their responsibilities, their APIs, and how they communicate. It also defines the boundary between the Maltese Quest product layer and the Kids Connect Platform layer so that platform services built for V1 can be reused by Kids Connect without a rebuild.</p>
+    <h1>2. Layer Model</h1>
+    <p>The architecture is organised into three layers. Each layer has a clear owner, a clear boundary, and a clear set of responsibilities.</p>
+    <h1>3. Module Map</h1>
+    <p>The system is divided into seven logical modules. Each module maps to one layer. Modules communicate through defined API contracts, not direct database access across boundaries.</p>
+    <h1>4. Module Detail</h1>
+    <h2>4.1 Identity and Consent Service</h2>
+<p>Layer: Kids Connect Platform</p>
+
+<h3>Responsibilities</h3>
+<ul>
+  <li>Parent sign-up, email verification, and login.</li>
+  <li>Social sign-in via Google and Apple.</li>
+  <li>Consent record creation and storage with timestamp and checkbox states.</li>
+  <li>Child profile activation gated on consent completion.</li>
+  <li>Session token issuance using a token-based identity system.</li>
+  <li>Token federation interface for future Kids Connect reuse.</li>
+</ul>
+
+<h3>Key data owned</h3>
+<ul>
+  <li>Parent account record.</li>
+  <li>Consent record: parent ID, timestamp, four checkbox states, IP address.</li>
+  <li>Session tokens and refresh tokens.</li>
+</ul>
+
+<h3>APIs exposed</h3>
+<ul>
+  <li>POST /auth/signup — Create parent account and trigger verification email.</li>
+  <li>POST /auth/verify-email — Confirm email token and activate parent account.</li>
+  <li>POST /auth/login — Authenticate parent and return session token.</li>
+  <li>POST /auth/social — Social login via Google or Apple.</li>
+  <li>POST /consent/record — Store consent record on completion of consent flow.</li>
+  <li>GET /consent/status — Return consent status for a parent account.</li>
+  <li>POST /auth/child-token — Issue a child session token after PIN or parent approval.</li>
+  <li>POST /auth/refresh — Refresh an expiring session token.</li>
+</ul>
+
+<h3>API Contract Reference</h3>
+<p>The endpoint list in this section is architectural in scope only. Detailed request/response schemas, authentication rules, validation rules, error codes, pagination, idempotency, and endpoint-specific behaviors are defined in <code>api-contract-specifications.md</code>.</p>
+
+<h3>Platform hook</h3>
+<p>The token-based identity system must support federation from day one. When Kids Connect launches, child and parent tokens issued here must be valid across both Maltese Quest and Kids Connect without re-authentication.</p>
+<h2>4.2 Parent and Child Profile Service</h2>
+<p>Layer: Kids Connect Platform</p>
+
+<h3>Responsibilities</h3>
+<ul>
+  <li>Household creation and management.</li>
+  <li>Child profile creation under a parent account.</li>
+  <li>Age band assignment based on child age field.</li>
+  <li>PIN creation, storage, and verification.</li>
+  <li>Parent approval login path for households without a PIN.</li>
+  <li>Optional second parent or guardian role on a household.</li>
+  <li>First-time experience flag per child profile.</li>
+  <li>Timezone storage for streak and notification timing.</li>
+</ul>
+
+<h3>Key data owned</h3>
+<ul>
+  <li>Household record: name, timezone, parent IDs.</li>
+  <li>Child profile record: first name, age, age band, avatar ID, PIN hash, first-time flag.</li>
+  <li>Parent-child relationship record.</li>
+</ul>
+
+<h3>APIs exposed</h3>
+<ul>
+  <li>POST /households — Create a new household.</li>
+  <li>GET /households/:id — Return household detail.</li>
+  <li>POST /households/:id/children — Create a child profile under a household.</li>
+  <li>GET /children/:id — Return child profile detail.</li>
+  <li>PATCH /children/:id — Update child profile fields including age band.</li>
+  <li>POST /children/:id/pin — Set or update child PIN.</li>
+  <li>POST /children/:id/pin/verify — Verify child PIN and return child session token.</li>
+  <li>POST /children/:id/parent-approval — Trigger parent approval login notification.</li>
+  <li>GET /children/:id/first-time — Return first-time experience flag status.</li>
+  <li>DELETE /children/:id/first-time — Clear first-time flag on quest map unlock.</li>
+</ul>
+
+<h3>API Contract Reference</h3>
+<p>The endpoint list in this section is architectural in scope only. Detailed request/response schemas, authentication rules, validation rules, error codes, pagination, idempotency, and endpoint-specific behaviors are defined in <code>api-contract-specifications.md</code>.</p>
+
+<h3>Platform hook</h3>
+<p>The household model, child profile structure, and parent-child relationship record must be reusable by Kids Connect without schema changes. Kids Connect will add messaging permissions and contact visibility on top of the same profile records.</p> 
+<h2>4.3 Contact and Permissions Service</h2>
+<p>Layer: Kids Connect Platform</p>
+
+<h3>Responsibilities</h3>
+<ul>
+  <li>Contact request creation, approval, and rejection.</li>
+  <li>Two-parent approval model: requesting parent approves outbound, receiving parent approves inbound.</li>
+  <li>Approved contacts graph storage and retrieval.</li>
+  <li>Permission level assignment: challenge only, learning companion, future chat enabled.</li>
+  <li>Permission level upgrade and downgrade with audit trail.</li>
+  <li>Contact revocation and block, both immediate and permanent.</li>
+  <li>Contact request expiry after 7 days for outbound approval and 30 days for inbound approval.</li>
+</ul>
+
+<h3>Key data owned</h3>
+<ul>
+  <li>Contact request record: requester child ID, requester parent ID, target details, status, timestamps.</li>
+  <li>Approved contact record: child A ID, child B ID, permission level, approval timestamps, change history.</li>
+  <li>Block record: blocking child ID, blocked child ID, reason code, timestamp.</li>
+</ul>
+
+<h3>APIs exposed</h3>
+<ul>
+  <li>POST /contacts/requests — Create a contact request.</li>
+  <li>GET /contacts/requests/:id — Return contact request detail.</li>
+  <li>POST /contacts/requests/:id/approve — Approve a contact request and set permission level.</li>
+  <li>POST /contacts/requests/:id/reject — Reject a contact request.</li>
+  <li>GET /contacts/:childId — Return approved contact list for a child.</li>
+  <li>PATCH /contacts/:contactId/permission — Change permission level for an approved contact.</li>
+  <li>DELETE /contacts/:contactId — Revoke an approved contact immediately.</li>
+  <li>POST /contacts/:contactId/block — Block a contact permanently.</li>
+</ul>
+
+<h3>API Contract Reference</h3>
+<p>The endpoint list in this section is architectural in scope only. Detailed request/response schemas, authentication rules, validation rules, error codes, pagination, idempotency, and endpoint-specific behaviors are defined in <code>api-contract-specifications.md</code>.</p>
+
+<h3>Platform hook</h3>
+<p>The approved contacts graph is the core social graph for Kids Connect. The CHAT_ENABLED permission level is a placeholder in V1 but the field must exist in the schema from day one so Kids Connect can activate it without a migration.</p>
+<h2>4.4 Safety and Alerting Service</h2>
+<p>Layer: Kids Connect Platform</p>
+
+<h3>Responsibilities</h3>
+<ul>
+  <li>Event logging for all child interaction events.</li>
+  <li>Alert classification into informational, warning, and action required severity levels.</li>
+  <li>Parent notification triggering on alert generation.</li>
+  <li>Alert resolution tracking with parent action recorded.</li>
+  <li>Account pause and reactivation.</li>
+  <li>Activity log retention for legal and audit purposes.</li>
+  <li>Unusual activity detection rules engine, rules to be defined before build.</li>
+</ul>
+
+<h3>Key data owned</h3>
+<ul>
+  <li>Interaction event log: child ID, event type, timestamp, related contact ID if applicable, device ID.</li>
+  <li>Alert record: child ID, severity, description, status, parent action taken, timestamps.</li>
+  <li>Account pause record: child ID, paused by parent ID, timestamp, reactivation timestamp.</li>
+</ul>
+
+<h3>APIs exposed</h3>
+<ul>
+  <li>POST /events/log — Log a child interaction event. Called by MQ and KCP services.</li>
+  <li>GET /alerts/:parentId — Return all alerts for a parent account.</li>
+  <li>GET /alerts/:alertId — Return alert detail and related activity log.</li>
+  <li>POST /alerts/:alertId/resolve — Resolve an alert with action taken recorded.</li>
+  <li>POST /children/:id/pause — Pause a child account immediately.</li>
+  <li>POST /children/:id/resume — Reactivate a paused child account.</li>
+  <li>GET /activity-log/:childId — Return activity log for a child. Premium feature for full history.</li>
+</ul>
+
+<h3>API Contract Reference</h3>
+<p>The endpoint list in this section is architectural in scope only. Detailed request/response schemas, authentication rules, validation rules, error codes, pagination, idempotency, and endpoint-specific behaviors are defined in <code>api-contract-specifications.md</code>.</p>
+
+<h3>Critical requirements</h3>
+<p>Every event log write, alert generation, and revocation execution must be confirmed. If a write fails the system must retry and alert the engineering team. A missed safety event is a legal and ethical failure, not just a technical one.</p>
+<h2>4.5 Learning Content and Progression Service</h2>
+<p>Layer: Maltese Quest</p>
+
+<h3>Responsibilities</h3>
+<ul>
+  <li>Quest map structure: sections, nodes, milestones, and lock state per child.</li>
+  <li>Lesson delivery: activity sequences, content retrieval, and activity type routing.</li>
+  <li>Curriculum alignment to A1 to A2 level Maltese content bands.</li>
+  <li>Progress tracking: lesson completion, accuracy, retry counts, session length.</li>
+  <li>Streak calculation: absence detection, streak maintenance, streak reset, comeback bonus.</li>
+  <li>XP calculation: activity type, accuracy, streak status, and age band inputs.</li>
+  <li>Badge threshold evaluation and badge award.</li>
+  <li>Narrative unlock triggering on milestone completion.</li>
+  <li>Review loop generation for weak vocabulary or phrases.</li>
+  <li>First-time tutorial sequence delivery.</li>
+</ul>
+
+<h3>Key data owned</h3>
+<ul>
+  <li>Quest map state per child: node completion status, lock state, milestone status.</li>
+  <li>Lesson record: unit, theme, activity sequence, content IDs.</li>
+  <li>Activity record: type, content reference, correct answer, prompt ID.</li>
+  <li>Child progress record: XP total, streak count, badge list, lesson completion history.</li>
+  <li>Streak record: last active date, current streak, longest streak, absence threshold.</li>
+</ul>
+
+<h3>APIs exposed</h3>
+<ul>
+  <li>GET /quest-map/:childId — Return quest map with node states for a child.</li>
+  <li>GET /lessons/:lessonId — Return lesson detail and activity sequence.</li>
+  <li>POST /progress/lesson-complete — Record lesson completion and trigger XP and badge evaluation.</li>
+  <li>POST /progress/activity-complete — Record individual activity completion with accuracy data.</li>
+  <li>GET /progress/:childId — Return full progress summary for a child.</li>
+  <li>GET /streak/:childId — Return current streak status and history.</li>
+  <li>POST /streak/check-absence — Evaluate absence and return streak status.</li>
+  <li>GET /badges/:childId — Return earned and in-progress badges for a child.</li>
+  <li>GET /review/:childId — Return review activity list for weak content areas.</li>
+</ul>
+
+<h3>API Contract Reference</h3>
+<p>The endpoint list in this section is architectural in scope only. Detailed request/response schemas, authentication rules, validation rules, error codes, pagination, idempotency, and endpoint-specific behaviors are defined in <code>api-contract-specifications.md</code>.</p>
+<h2>4.6 Challenge and Recording Service</h2>
+<p>Layer: Maltese Quest</p>
+
+<h3>Responsibilities</h3>
+<ul>
+  <li>Preset prompt library management and retrieval.</li>
+  <li>Voice recording capture, storage, and retrieval within challenge context only.</li>
+  <li>Challenge object creation: sender ID, recipient ID, prompt ID, recording reference, timestamp.</li>
+  <li>Challenge delivery to recipient challenge inbox.</li>
+  <li>Challenge response capture and attachment to original challenge object.</li>
+  <li>Preset reaction sending on challenge response.</li>
+  <li>Fallback activity routing when microphone permission is denied.</li>
+  <li>Recording storage policy enforcement: temporary or permanent, to be confirmed in open questions.</li>
+  <li>Microphone permission status tracking per device per child profile.</li>
+</ul>
+
+<h3>Key data owned</h3>
+<ul>
+  <li>Preset prompt record: ID, Maltese phrase, English translation, audio file reference, unit alignment.</li>
+  <li>Challenge record: sender child ID, recipient child ID, prompt ID, recording reference, status, timestamps.</li>
+  <li>Recording record: child ID, challenge ID, audio file reference, duration, storage expiry if applicable.</li>
+  <li>Microphone permission record: child ID, device ID, status, timestamp.</li>
+</ul>
+
+<h3>APIs exposed</h3>
+<ul>
+  <li>GET /prompts — Return available preset prompts for a lesson unit.</li>
+  <li>POST /recordings/upload — Upload a voice recording and return a recording reference.</li>
+  <li>POST /challenges — Create and send a challenge object.</li>
+  <li>GET /challenges/inbox/:childId — Return challenge inbox for a child.</li>
+  <li>GET /challenges/:challengeId — Return challenge detail including prompt and recording reference.</li>
+  <li>POST /challenges/:challengeId/respond — Attach a response recording to a challenge.</li>
+  <li>POST /challenges/:challengeId/react — Send a preset reaction to a completed challenge.</li>
+  <li>GET /recordings/:recordingId — Stream a recording with permission checks against challenge context.</li>
+  <li>POST /mic-permission — Log microphone permission status for a device and child profile.</li>
+  <li>GET /mic-permission/:childId — Return microphone permission status for a child on this device.</li>
+</ul>
+
+<h3>API Contract Reference</h3>
+<p>The endpoint list in this section is architectural in scope only. Detailed request/response schemas, authentication rules, validation rules, error codes, pagination, idempotency, and endpoint-specific behaviors are defined in <code>api-contract-specifications.md</code>.</p>
+
+<h3>Recording access rules</h3>
+<p>A recording may only be retrieved in the context of its challenge object. No recording should be accessible by URL alone. All recording retrieval must be permission-checked against the challenge ID and the requesting child or parent account. Parent recording review is a premium feature and must be gated at the API level, not just the UI level.</p>
+<h2>4.7 Analytics and Event Logging Service</h2>
+<p>Layer: Shared Infrastructure</p>
+
+<h3>Responsibilities</h3>
+<ul>
+  <li>Shared event bus receiving events from both MQ and KCP services.</li>
+  <li>Session event logging: app open, session duration, screens visited.</li>
+  <li>Learning event logging: lesson start, lesson complete, activity type, XP earned, badge awarded.</li>
+  <li>Social event logging: challenge sent, challenge received, challenge responded, reaction sent.</li>
+  <li>Safety event forwarding to Safety and Alerting Service.</li>
+  <li>Progress data aggregation for parent progress review screens.</li>
+  <li>Streak and XP summary data for parent dashboard headline metrics.</li>
+  <li>Data retention policy enforcement per event type.</li>
+</ul>
+
+<h3>Key data owned</h3>
+<ul>
+  <li>Raw event log: event type, child ID, timestamp, metadata, source service.</li>
+  <li>Aggregated progress summary: pre-computed per child for fast dashboard loading.</li>
+</ul>
+
+<h3>APIs exposed</h3>
+<ul>
+  <li>POST /events — Ingest an event from any service, validate schema, and route to the correct store.</li>
+  <li>GET /analytics/progress/:childId — Return aggregated progress data for parent progress review.</li>
+  <li>GET /analytics/dashboard/:childId — Return headline metrics for parent dashboard card.</li>
+  <li>GET /analytics/speaking/:childId — Return speaking challenge history for progress review.</li>
+  <li>GET /analytics/streak/:childId — Return streak history and heatmap data.</li>
+  <li>GET /analytics/badges/:childId — Return badge history with dates and trigger events.</li>
+</ul>
+
+<h3>API Contract Reference</h3>
+<p>The endpoint list in this section is architectural in scope only. Detailed request/response schemas, authentication rules, validation rules, error codes, pagination, idempotency, and endpoint-specific behaviors are defined in <code>api-contract-specifications.md</code>.</p>
+<h1>5. Communication Patterns</h1>
+    <h2>5.1 Synchronous API calls</h2>
+    <p>All user-facing interactions use synchronous REST API calls. The calling service waits for a response before continuing. Examples: lesson retrieval, challenge creation, PIN verification.</p>
+    <h2>5.2 Asynchronous events</h2>
+    <p>Background processes use asynchronous events via the shared event bus. The calling service fires and forgets. The analytics and safety services consume events independently. Examples: XP calculation on lesson complete, alert classification on unusual activity detection, notification sending on contact approval.</p>
+    <h2>5.3 Cross-boundary rules</h2>
+    <h1>6. Core Data Model</h1>
+    <p>This section defines the key entities and their relationships. Full schema detail belongs in a separate data model document. This section covers the entities needed to understand the architecture.</p>
+    <h1>7. Security Requirements</h1>
+    <h2>7.1 Authentication</h2>
+    <li>All API endpoints except sign-up and login require a valid session token.</li>
+    <li>Child session tokens are scoped to the child profile and cannot access parent account data.</li>
+    <li>Parent session tokens can access their own household and child profiles only.</li>
+    <li>Tokens must expire and refresh. Refresh token rotation on every use.</li>
+    <h2>7.2 Data access rules</h2>
+    <li>A child can only access their own quest map, progress, and challenge inbox.</li>
+    <li>A child can only send challenges to contacts in their approved contacts list.</li>
+    <li>A parent can only access profiles within their own household.</li>
+    <li>Recording retrieval is challenge-scoped. No recording is accessible outside its challenge context.</li>
+    <li>Premium features must be gated at the API level, not just the UI level.</li>
+    <h2>7.3 Child data protection</h2>
+    <li>No child surname, address, photo, or school name stored in V1.</li>
+    <li>Voice recordings stored with expiry policy, to be confirmed in open questions.</li>
+    <li>Consent record must be stored before any child data is collected.</li>
+    <li>Parent can request deletion of all child data at any time.</li>
+    <li>GDPR and applicable child data protection laws apply from day one, not from scale.</li>
+    <h2>7.4 Voice recording security</h2>
+    <h1>8. Platform Hooks for Kids Connect</h1>
+    <p>The following items must be built in a way that allows Kids Connect to reuse them without a schema migration or a rebuild. These are non-negotiable architectural requirements for V1.</p>
+    <h1>9. Recommended Technology Choices</h1>
+    <h1>10. Open Architectural Questions</h1>
+    <p>The following questions must be resolved before build starts. Each one has a direct impact on the architecture or data model.</p>
+    <h1>11. Architectural Risks</h1>
+    <h1>12. Suggested Next Documents</h1>
+    <li>Data Model and Permissions Matrix — full entity schema with field types, constraints, and relationship diagram.</li>
+    <li>API Contract Specifications — detailed request and response schemas for each endpoint defined in this document.</li>
+    <li>Security and Compliance Review — GDPR assessment, child data protection checklist, voice recording legal review.</li>
+    <li>Infrastructure and Hosting Plan — cloud provider selection, region, environment setup, CI/CD pipeline.</li>
+    <li>Curriculum Content Map — units 1 to 3 with lesson sequences, vocabulary lists, and activity type mapping.</li>
+  </body>
+</html>

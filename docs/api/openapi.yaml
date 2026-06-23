@@ -1,0 +1,2808 @@
+openapi: 3.1.0
+info:
+  title: Maltese Quest V1 API
+  version: 1.0.0
+  description: |
+    API specification for Maltese Quest V1 and the Kids Connect Platform layer.
+
+    ## Layer model
+    - **MQ** — Maltese Quest product services (learning, challenges, recordings, progress).
+    - **KCP** — Kids Connect Platform services (identity, profiles, contacts, permissions, safety).
+    - **SHSYS** — Shared infrastructure (analytics, event bus, notifications).
+
+    ## Authentication
+    All endpoints use Bearer JWT tokens unless marked `Public` or `Internal`.
+    - **Parent token** — scoped to the parent account and their household only.
+    - **Child token** — scoped to one child profile; cannot access parent data.
+    - **Internal token** — service-to-service calls only; never issued to a client.
+    - **Refresh token** — used only on `POST /auth/refresh`; rotated on every use.
+
+    ## Global conventions
+    - Base path: `/v1`
+    - All responses are JSON unless the endpoint returns binary or stream data.
+    - All list endpoints use cursor pagination unless otherwise stated.
+    - All mutation endpoints that may be retried must be idempotent.
+    - Event names use dotted lowercase format e.g. `contact.request.created`.
+
+servers:
+  - url: https://api.maltesequest.com/v1
+    description: Production
+  - url: https://staging-api.maltesequest.com/v1
+    description: Staging
+  - url: http://localhost:3000/v1
+    description: Local development
+
+tags:
+  - name: Identity and Consent
+    description: KCP — Parent authentication, consent records, child session tokens.
+  - name: Profiles
+    description: KCP — Household and child profile management.
+  - name: Contacts and Permissions
+    description: KCP — Approved contacts graph, permission levels, contact requests.
+  - name: Safety and Alerts
+    description: KCP — Event logging, alert management, account pause and resume.
+  - name: Learning and Progression
+    description: MQ — Quest map, lessons, progress, streaks, badges.
+  - name: Challenges and Recordings
+    description: MQ — Voice challenges, recordings, preset prompts.
+  - name: Analytics
+    description: SHSYS — Aggregated progress data for parent dashboard.
+
+# ─────────────────────────────────────────────
+# REUSABLE COMPONENTS
+# ─────────────────────────────────────────────
+components:
+  securitySchemes:
+    parentToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued to a parent account.
+    childToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT scoped to one child profile.
+    refreshToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Refresh token. Used only on POST /auth/refresh.
+    internalToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Service-to-service token. Never issued to a client.
+
+  schemas:
+
+    # ── Shared ──────────────────────────────
+    Error:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          example: EMAIL_EXISTS
+        message:
+          type: string
+          example: An account with this email already exists.
+        details:
+          type: object
+          additionalProperties: true
+        requestId:
+          type: string
+          example: req_abc123
+
+    CursorPage:
+      type: object
+      properties:
+        nextCursor:
+          type: string
+          nullable: true
+          description: Pass as `cursor` query param to fetch the next page. Null when no more pages.
+        hasMore:
+          type: boolean
+
+    PermissionLevel:
+      type: string
+      enum: [CHALLENGE_ONLY, LEARNING_COMPANION, CHAT_ENABLED]
+      description: |
+        - `CHALLENGE_ONLY` — child can send and receive voice challenges only.
+        - `LEARNING_COMPANION` — challenge access plus quest progress and streak visibility.
+        - `CHAT_ENABLED` — placeholder in V1, greyed out in UI. Reserved for Kids Connect.
+
+    AgeBand:
+      type: string
+      enum: [BAND_5_7, BAND_8_10, BAND_11_13]
+      description: Determines reward calibration and UI density.
+
+    # ── Identity and Consent ─────────────────
+    ParentSignupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: parent@example.com
+        password:
+          type: string
+          minLength: 8
+          example: secret-password
+        displayName:
+          type: string
+          example: Maria Borg
+
+    ParentSignupResponse:
+      type: object
+      properties:
+        parentId:
+          type: string
+          example: par_123
+        verificationRequired:
+          type: boolean
+          example: true
+
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: Token from the verification email link.
+          example: tok_abc456
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    LoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: Access token lifetime in seconds.
+          example: 3600
+
+    SocialLoginRequest:
+      type: object
+      required: [provider, idToken]
+      properties:
+        provider:
+          type: string
+          enum: [google, apple]
+        idToken:
+          type: string
+          description: Identity token from the provider SDK.
+
+    ConsentRecordRequest:
+      type: object
+      required: [dataCollection, voiceRecording, approvedContacts, withdrawalRight]
+      properties:
+        dataCollection:
+          type: boolean
+          description: Parent accepted data collection and storage for their child.
+        voiceRecording:
+          type: boolean
+          description: Parent accepted voice recording storage and usage.
+        approvedContacts:
+          type: boolean
+          description: Parent accepted the approved contacts and interaction model.
+        withdrawalRight:
+          type: boolean
+          description: Parent acknowledged their right to withdraw consent at any time.
+
+    ConsentStatusResponse:
+      type: object
+      properties:
+        consentGiven:
+          type: boolean
+        consentTimestamp:
+          type: string
+          format: date-time
+          nullable: true
+        checkboxStates:
+          type: object
+          properties:
+            dataCollection:
+              type: boolean
+            voiceRecording:
+              type: boolean
+            approvedContacts:
+              type: boolean
+            withdrawalRight:
+              type: boolean
+
+    ChildTokenRequest:
+      type: object
+      required: [childId, method]
+      properties:
+        childId:
+          type: string
+          example: ch_789
+        method:
+          type: string
+          enum: [pin, parent_approval]
+        pin:
+          type: string
+          description: Required when method is pin.
+          example: "1234"
+
+    ChildTokenResponse:
+      type: object
+      properties:
+        childToken:
+          type: string
+        expiresIn:
+          type: integer
+          example: 86400
+
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+
+    # ── Profiles ─────────────────────────────
+    HouseholdCreateRequest:
+      type: object
+      required: [name, timezone]
+      properties:
+        name:
+          type: string
+          example: The Borg Family
+        timezone:
+          type: string
+          example: Europe/Malta
+        secondParentEmail:
+          type: string
+          format: email
+          nullable: true
+          description: Optional. Invites a second parent or guardian to co-manage the household.
+
+    Household:
+      type: object
+      properties:
+        householdId:
+          type: string
+          example: hh_001
+        name:
+          type: string
+        timezone:
+          type: string
+        parentIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ChildCreateRequest:
+      type: object
+      required: [firstName, age, avatarId]
+      properties:
+        firstName:
+          type: string
+          example: Luca
+        age:
+          type: integer
+          minimum: 5
+          maximum: 13
+          example: 8
+        avatarId:
+          type: string
+          description: ID of a preset avatar from the avatar library.
+          example: avatar_03
+
+    ChildProfile:
+      type: object
+      properties:
+        childId:
+          type: string
+          example: ch_789
+        householdId:
+          type: string
+        firstName:
+          type: string
+        age:
+          type: integer
+        ageBand:
+          $ref: '#/components/schemas/AgeBand'
+        avatarId:
+          type: string
+        hasPIN:
+          type: boolean
+        firstTimeFlag:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    ChildUpdateRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+        age:
+          type: integer
+          minimum: 5
+          maximum: 13
+        avatarId:
+          type: string
+
+    PinSetRequest:
+      type: object
+      required: [pin, confirmPin]
+      properties:
+        pin:
+          type: string
+          pattern: '^\d{4}$'
+          description: Four-digit numeric PIN.
+          example: "4821"
+        confirmPin:
+          type: string
+          example: "4821"
+
+    PinVerifyRequest:
+      type: object
+      required: [pin]
+      properties:
+        pin:
+          type: string
+          pattern: '^\d{4}$'
+
+    # ── Contacts and Permissions ─────────────
+    ContactRequestCreate:
+      type: object
+      required: [targetParentEmail, targetChildFirstName]
+      properties:
+        targetParentEmail:
+          type: string
+          format: email
+          description: Email of the receiving parent.
+        targetChildFirstName:
+          type: string
+          description: First name of the child to connect with.
+        requestingChildId:
+          type: string
+
+    ContactRequest:
+      type: object
+      properties:
+        requestId:
+          type: string
+          example: req_cr_001
+        requesterChildId:
+          type: string
+        requesterParentId:
+          type: string
+        targetParentEmail:
+          type: string
+        targetChildFirstName:
+          type: string
+        status:
+          type: string
+          enum: [pending_outbound, pending_inbound, approved, rejected, expired]
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    ContactRequestApprove:
+      type: object
+      required: [permissionLevel]
+      properties:
+        permissionLevel:
+          $ref: '#/components/schemas/PermissionLevel'
+
+    ApprovedContact:
+      type: object
+      properties:
+        contactId:
+          type: string
+          example: con_001
+        childFirstName:
+          type: string
+          example: Sofia
+        avatarId:
+          type: string
+        permissionLevel:
+          $ref: '#/components/schemas/PermissionLevel'
+        approvedAt:
+          type: string
+          format: date-time
+        permissionChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+        challengesExchanged:
+          type: integer
+          description: Total challenges sent and received with this contact.
+
+    ApprovedContactList:
+      allOf:
+        - $ref: '#/components/schemas/CursorPage'
+        - type: object
+          properties:
+            contacts:
+              type: array
+              items:
+                $ref: '#/components/schemas/ApprovedContact'
+
+    PermissionUpdateRequest:
+      type: object
+      required: [permissionLevel]
+      properties:
+        permissionLevel:
+          $ref: '#/components/schemas/PermissionLevel'
+        reason:
+          type: string
+          nullable: true
+          description: Internal note for the audit log. Not shown to other family.
+
+    # ── Safety and Alerts ────────────────────
+    InteractionEventLog:
+      type: object
+      required: [eventType, childId, sourceService]
+      properties:
+        eventId:
+          type: string
+        eventType:
+          type: string
+          description: Dotted lowercase event name e.g. challenge.sent
+          example: challenge.sent
+        childId:
+          type: string
+        contactId:
+          type: string
+          nullable: true
+        deviceId:
+          type: string
+          nullable: true
+        sourceService:
+          type: string
+          enum: [MQ, KCP, SHSYS]
+        metadata:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+
+    AlertSeverity:
+      type: string
+      enum: [informational, warning, action_required]
+
+    Alert:
+      type: object
+      properties:
+        alertId:
+          type: string
+        childId:
+          type: string
+        severity:
+          $ref: '#/components/schemas/AlertSeverity'
+        description:
+          type: string
+          description: Plain language description. No technical detail.
+        contactId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [open, resolved]
+        actionTaken:
+          type: string
+          nullable: true
+          enum: [dismissed, blocked, permission_revoked, account_paused, null]
+        createdAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    AlertList:
+      allOf:
+        - $ref: '#/components/schemas/CursorPage'
+        - type: object
+          properties:
+            alerts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Alert'
+
+    AlertResolveRequest:
+      type: object
+      required: [actionTaken]
+      properties:
+        actionTaken:
+          type: string
+          enum: [dismissed, blocked, permission_revoked, account_paused]
+
+    ActivityLogEntry:
+      type: object
+      properties:
+        entryId:
+          type: string
+        eventType:
+          type: string
+        description:
+          type: string
+        contactId:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+    ActivityLog:
+      allOf:
+        - $ref: '#/components/schemas/CursorPage'
+        - type: object
+          properties:
+            entries:
+              type: array
+              items:
+                $ref: '#/components/schemas/ActivityLogEntry'
+
+    # ── Learning and Progression ─────────────
+    QuestNode:
+      type: object
+      properties:
+        nodeId:
+          type: string
+        lessonId:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum: [locked, available, in_progress, complete]
+        isMilestone:
+          type: boolean
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    QuestMap:
+      type: object
+      properties:
+        childId:
+          type: string
+        units:
+          type: array
+          items:
+            type: object
+            properties:
+              unitId:
+                type: string
+              theme:
+                type: string
+              nodes:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QuestNode'
+
+    ActivityType:
+      type: string
+      enum: [match, tap, listen, reorder, repeat, speak]
+
+    LessonActivity:
+      type: object
+      properties:
+        activityId:
+          type: string
+        type:
+          $ref: '#/components/schemas/ActivityType'
+        contentRef:
+          type: string
+          description: Reference to audio or image asset.
+        promptId:
+          type: string
+          nullable: true
+        correctAnswer:
+          type: string
+          nullable: true
+          description: Omitted for speak activities.
+
+    Lesson:
+      type: object
+      properties:
+        lessonId:
+          type: string
+        unitId:
+          type: string
+        theme:
+          type: string
+          example: Greetings and introductions
+        curriculumBand:
+          type: string
+          example: A1
+        estimatedMinutes:
+          type: integer
+          example: 4
+        activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/LessonActivity'
+
+    LessonCompleteRequest:
+      type: object
+      required: [lessonId, childId, durationSeconds]
+      properties:
+        lessonId:
+          type: string
+        childId:
+          type: string
+        durationSeconds:
+          type: integer
+        idempotencyKey:
+          type: string
+          description: Client-generated key to prevent duplicate lesson completion writes on retry.
+
+    LessonCompleteResponse:
+      type: object
+      properties:
+        xpAwarded:
+          type: integer
+        badgeAwarded:
+          type: object
+          nullable: true
+          properties:
+            badgeId:
+              type: string
+            badgeName:
+              type: string
+        milestoneReached:
+          type: boolean
+        narrativeUnlocked:
+          type: boolean
+
+    ActivityCompleteRequest:
+      type: object
+      required: [activityId, childId, correct, retryCount]
+      properties:
+        activityId:
+          type: string
+        childId:
+          type: string
+        correct:
+          type: boolean
+        retryCount:
+          type: integer
+          minimum: 0
+        durationSeconds:
+          type: integer
+        idempotencyKey:
+          type: string
+
+    ProgressSummary:
+      type: object
+      properties:
+        childId:
+          type: string
+        xpTotal:
+          type: integer
+        streakCurrent:
+          type: integer
+        streakLongest:
+          type: integer
+        lessonsCompleted:
+          type: integer
+        lessonsCompletedThisWeek:
+          type: integer
+        challengesSent:
+          type: integer
+        challengesReceived:
+          type: integer
+        badgesEarned:
+          type: integer
+        lastActiveAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    StreakStatus:
+      type: object
+      properties:
+        childId:
+          type: string
+        currentStreak:
+          type: integer
+        longestStreak:
+          type: integer
+        lastActiveDate:
+          type: string
+          format: date
+        streakIntact:
+          type: boolean
+        comebackBonusAvailable:
+          type: boolean
+        history:
+          type: array
+          description: Last 30 days of activity for heatmap rendering.
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              sessionsCompleted:
+                type: integer
+              xpEarned:
+                type: integer
+
+    CheckAbsenceRequest:
+      type: object
+      required: [childId]
+      properties:
+        childId:
+          type: string
+        triggeredAt:
+          type: string
+          format: date-time
+
+    Badge:
+      type: object
+      properties:
+        badgeId:
+          type: string
+        badgeType:
+          type: string
+        badgeName:
+          type: string
+        description:
+          type: string
+        awardedAt:
+          type: string
+          format: date-time
+          nullable: true
+        inProgress:
+          type: boolean
+        progressPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+
+    BadgeList:
+      type: object
+      properties:
+        earned:
+          type: array
+          items:
+            $ref: '#/components/schemas/Badge'
+        inProgress:
+          type: array
+          items:
+            $ref: '#/components/schemas/Badge'
+
+    ReviewActivity:
+      type: object
+      properties:
+        activityId:
+          type: string
+        type:
+          $ref: '#/components/schemas/ActivityType'
+        contentRef:
+          type: string
+        weaknessScore:
+          type: number
+          format: float
+          description: Higher score means more retries or errors on this item.
+
+    # ── Challenges and Recordings ────────────
+    PresetPrompt:
+      type: object
+      properties:
+        promptId:
+          type: string
+        malteseText:
+          type: string
+          example: "Bonġu"
+        englishText:
+          type: string
+          example: "Good morning"
+        audioRef:
+          type: string
+          description: Reference to the model pronunciation audio asset.
+        unitId:
+          type: string
+
+    RecordingUploadResponse:
+      type: object
+      properties:
+        recordingId:
+          type: string
+        durationSeconds:
+          type: number
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null until recording retention policy is confirmed.
+
+    ChallengeCreateRequest:
+      type: object
+      required: [senderChildId, recipientChildId, promptId, recordingId]
+      properties:
+        senderChildId:
+          type: string
+        recipientChildId:
+          type: string
+        promptId:
+          type: string
+        recordingId:
+          type: string
+        idempotencyKey:
+          type: string
+
+    Challenge:
+      type: object
+      properties:
+        challengeId:
+          type: string
+        senderChildId:
+          type: string
+        senderFirstName:
+          type: string
+        senderAvatarId:
+          type: string
+        recipientChildId:
+          type: string
+        promptId:
+          type: string
+        prompt:
+          $ref: '#/components/schemas/PresetPrompt'
+        recordingId:
+          type: string
+        responseRecordingId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, responded, reacted]
+        reactionType:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        respondedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ChallengeInbox:
+      allOf:
+        - $ref: '#/components/schemas/CursorPage'
+        - type: object
+          properties:
+            challenges:
+              type: array
+              items:
+                $ref: '#/components/schemas/Challenge'
+
+    ChallengeRespondRequest:
+      type: object
+      required: [recordingId]
+      properties:
+        recordingId:
+          type: string
+        idempotencyKey:
+          type: string
+
+    ChallengeReactRequest:
+      type: object
+      required: [reactionType]
+      properties:
+        reactionType:
+          type: string
+          enum: [star, thumbs_up, heart, fire]
+          description: Preset reactions only. No free-form content.
+
+    MicPermissionRequest:
+      type: object
+      required: [childId, deviceId, status]
+      properties:
+        childId:
+          type: string
+        deviceId:
+          type: string
+        status:
+          type: string
+          enum: [granted, denied, not_asked]
+
+    MicPermissionStatus:
+      type: object
+      properties:
+        childId:
+          type: string
+        deviceId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [granted, denied, not_asked]
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ── Analytics ────────────────────────────
+    DashboardMetrics:
+      type: object
+      properties:
+        childId:
+          type: string
+        currentStreak:
+          type: integer
+        lessonsThisWeek:
+          type: integer
+        totalXP:
+          type: integer
+        lastActiveAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    SpeakingHistory:
+      type: object
+      properties:
+        childId:
+          type: string
+        totalChallengesSent:
+          type: integer
+        totalChallengesReceived:
+          type: integer
+        completedChallenges:
+          type: integer
+        pendingChallenges:
+          type: integer
+        speakingSubmissionRate:
+          type: number
+          format: float
+          description: Percentage of speak activities completed without skipping.
+        weeklyActivity:
+          type: array
+          items:
+            type: object
+            properties:
+              weekStartDate:
+                type: string
+                format: date
+              challengesSent:
+                type: integer
+              challengesReceived:
+                type: integer
+
+    BadgeHistory:
+      type: object
+      properties:
+        childId:
+          type: string
+        badges:
+          type: array
+          items:
+            type: object
+            properties:
+              badgeId:
+                type: string
+              badgeName:
+                type: string
+              awardedAt:
+                type: string
+                format: date-time
+              triggerEvent:
+                type: string
+
+# ─────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────
+paths:
+
+  # ── Identity and Consent ──────────────────
+
+  /auth/signup:
+    post:
+      tags: [Identity and Consent]
+      summary: Create parent account
+      description: Creates a parent account and sends a verification email. No child data is collected until consent is recorded.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParentSignupRequest'
+      responses:
+        '201':
+          description: Account created. Verification email sent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParentSignupResponse'
+        '400':
+          description: Invalid email format.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_EMAIL
+                message: The email address provided is not valid.
+                requestId: req_001
+        '409':
+          description: Email already registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: EMAIL_EXISTS
+                message: An account with this email already exists.
+                requestId: req_002
+        '422':
+          description: Password too weak.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: PASSWORD_WEAK
+                message: Password must be at least 8 characters.
+                requestId: req_003
+
+  /auth/verify-email:
+    post:
+      tags: [Identity and Consent]
+      summary: Verify parent email
+      description: Confirms the email verification token and activates the parent account.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '204':
+          description: Email verified. Account activated.
+        '400':
+          description: Token invalid or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: TOKEN_INVALID
+                message: The verification token is invalid or has expired.
+                requestId: req_004
+
+  /auth/login:
+    post:
+      tags: [Identity and Consent]
+      summary: Authenticate parent
+      description: Returns access and refresh tokens on successful authentication.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_CREDENTIALS
+                message: Email or password is incorrect.
+                requestId: req_005
+
+  /auth/social:
+    post:
+      tags: [Identity and Consent]
+      summary: Social sign-in
+      description: Signs in or creates an account using a Google or Apple identity token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialLoginRequest'
+      responses:
+        '200':
+          description: Sign-in successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Invalid or expired provider token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: PROVIDER_TOKEN_INVALID
+                message: The identity token from the provider is invalid or expired.
+                requestId: req_006
+
+  /consent/record:
+    post:
+      tags: [Identity and Consent]
+      summary: Record parental consent
+      description: |
+        Stores the consent record with all four checkbox states, the parent account ID,
+        IP address, and timestamp. Child profile activation is blocked until this record exists.
+        Must not fail silently — a failed write must be retried and flagged.
+      security:
+        - parentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentRecordRequest'
+      responses:
+        '201':
+          description: Consent recorded.
+        '400':
+          description: One or more required checkboxes not accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: CONSENT_INCOMPLETE
+                message: All four consent items must be accepted before proceeding.
+                requestId: req_007
+        '409':
+          description: Consent already recorded for this account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: CONSENT_ALREADY_RECORDED
+                message: Consent has already been recorded for this account.
+                requestId: req_008
+
+  /consent/status:
+    get:
+      tags: [Identity and Consent]
+      summary: Get consent status
+      description: Returns the current consent state and checkbox values for the authenticated parent account.
+      security:
+        - parentToken: []
+      responses:
+        '200':
+          description: Consent status returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentStatusResponse'
+
+  /auth/child-token:
+    post:
+      tags: [Identity and Consent]
+      summary: Issue child session token
+      description: |
+        Issues a child-scoped JWT after PIN verification or parent approval.
+        The child token cannot access parent account data.
+      security:
+        - parentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChildTokenRequest'
+      responses:
+        '200':
+          description: Child token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildTokenResponse'
+        '401':
+          description: PIN incorrect.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: PIN_INCORRECT
+                message: The PIN entered is incorrect.
+                requestId: req_009
+        '403':
+          description: Child account is paused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: ACCOUNT_PAUSED
+                message: This child account has been paused by a parent.
+                requestId: req_010
+
+  /auth/refresh:
+    post:
+      tags: [Identity and Consent]
+      summary: Refresh access token
+      description: Rotates the refresh token and returns a new access token. Refresh token is invalidated on use.
+      security:
+        - refreshToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: New access token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Refresh token invalid or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: REFRESH_TOKEN_INVALID
+                message: The refresh token is invalid or has expired.
+                requestId: req_011
+
+  # ── Profiles ──────────────────────────────
+
+  /households:
+    post:
+      tags: [Profiles]
+      summary: Create household
+      description: Creates a household under the authenticated parent account. Requires consent to be recorded first.
+      security:
+        - parentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HouseholdCreateRequest'
+      responses:
+        '201':
+          description: Household created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Household'
+        '422':
+          description: Consent not yet recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: CONSENT_REQUIRED
+                message: Parental consent must be recorded before creating a household.
+                requestId: req_012
+
+  /households/{householdId}:
+    get:
+      tags: [Profiles]
+      summary: Get household
+      description: Returns household detail. Parent can only access their own household.
+      security:
+        - parentToken: []
+      parameters:
+        - name: householdId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Household returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Household'
+        '403':
+          description: Not authorised to access this household.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: FORBIDDEN
+                message: You do not have access to this household.
+                requestId: req_013
+
+  /households/{householdId}/children:
+    post:
+      tags: [Profiles]
+      summary: Create child profile
+      description: Creates a child profile under the household. Age band is assigned automatically from the age field.
+      security:
+        - parentToken: []
+      parameters:
+        - name: householdId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChildCreateRequest'
+      responses:
+        '201':
+          description: Child profile created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildProfile'
+        '422':
+          description: Age out of supported range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: AGE_OUT_OF_RANGE
+                message: Child age must be between 5 and 13.
+                requestId: req_014
+
+  /children/{childId}:
+    get:
+      tags: [Profiles]
+      summary: Get child profile
+      description: Returns child profile detail. Accessible by the parent of the household or the child's own token.
+      security:
+        - parentToken: []
+        - childToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Child profile returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildProfile'
+        '404':
+          description: Child not found or not in caller's household.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      tags: [Profiles]
+      summary: Update child profile
+      description: Updates child profile fields. Parent token required.
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChildUpdateRequest'
+      responses:
+        '200':
+          description: Child profile updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildProfile'
+
+  /children/{childId}/pin:
+    post:
+      tags: [Profiles]
+      summary: Set child PIN
+      description: Creates or updates the child PIN. PIN is stored as a hash and never returned in plain text.
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinSetRequest'
+      responses:
+        '204':
+          description: PIN set successfully.
+        '422':
+          description: PINs do not match.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: PIN_MISMATCH
+                message: The PIN and confirmation PIN do not match.
+                requestId: req_015
+
+  /children/{childId}/pin/verify:
+    post:
+      tags: [Profiles]
+      summary: Verify child PIN
+      description: |
+        Verifies the child PIN. On success, returns a child session token.
+        This endpoint is called by the child login flow. Do not expose the PIN hash.
+      security: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinVerifyRequest'
+      responses:
+        '200':
+          description: PIN correct. Child token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildTokenResponse'
+        '401':
+          description: PIN incorrect.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: PIN_INCORRECT
+                message: The PIN entered is incorrect.
+                requestId: req_016
+
+  /children/{childId}/parent-approval:
+    post:
+      tags: [Profiles]
+      summary: Trigger parent approval login
+      description: Sends a push notification to the parent to approve the child session. Used when no PIN is set.
+      security: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Parent approval notification sent.
+
+  /children/{childId}/first-time:
+    get:
+      tags: [Profiles]
+      summary: Get first-time flag
+      description: Returns whether this child profile has completed the first-time experience.
+      security:
+        - parentToken: []
+        - childToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: First-time flag status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  firstTimeFlag:
+                    type: boolean
+    delete:
+      tags: [Profiles]
+      summary: Clear first-time flag
+      description: |
+        Clears the first-time flag. Must be called only after the child lands on the quest map,
+        not before. If the child exits before this point, the introduction sequence must restart.
+      security:
+        - childToken: []
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: First-time flag cleared.
+
+  # ── Contacts and Permissions ───────────────
+
+  /contacts/requests:
+    post:
+      tags: [Contacts and Permissions]
+      summary: Create contact request
+      description: |
+        Creates an outbound contact request. The request must be approved by the
+        requesting parent before it is sent to the receiving family.
+        Expires automatically after 7 days if not approved outbound,
+        or after 30 days if not approved inbound.
+      security:
+        - parentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactRequestCreate'
+      responses:
+        '201':
+          description: Contact request created. Awaiting requesting parent approval.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactRequest'
+        '409':
+          description: A pending or approved request already exists between these children.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: REQUEST_ALREADY_EXISTS
+                message: A contact request already exists for this child pair.
+                requestId: req_017
+
+  /contacts/requests/{requestId}:
+    get:
+      tags: [Contacts and Permissions]
+      summary: Get contact request
+      description: Returns contact request detail. Accessible by the requesting or receiving parent.
+      security:
+        - parentToken: []
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Contact request detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactRequest'
+        '404':
+          description: Request not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /contacts/requests/{requestId}/approve:
+    post:
+      tags: [Contacts and Permissions]
+      summary: Approve contact request
+      description: |
+        Approves a contact request and sets the initial permission level.
+        Updates the approved contacts graph immediately.
+        Both parents receive a neutral notification.
+        Emits event: `contact.request.approved`
+      security:
+        - parentToken: []
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactRequestApprove'
+      responses:
+        '200':
+          description: Contact approved. Graph updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovedContact'
+        '409':
+          description: Request already approved or rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: REQUEST_ALREADY_RESOLVED
+                message: This contact request has already been resolved.
+                requestId: req_018
+        '422':
+          description: Permission level required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: PERMISSION_LEVEL_REQUIRED
+                message: A permission level must be selected before approving.
+                requestId: req_019
+
+  /contacts/requests/{requestId}/reject:
+    post:
+      tags: [Contacts and Permissions]
+      summary: Reject contact request
+      description: |
+        Rejects a contact request. The requesting family receives only a neutral
+        non-acceptance message. No reason is shared. The requesting child is not notified.
+        Emits event: `contact.request.rejected`
+      security:
+        - parentToken: []
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Request rejected. Requesting family notified neutrally.
+        '409':
+          description: Request already resolved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /contacts/{childId}:
+    get:
+      tags: [Contacts and Permissions]
+      summary: Get approved contacts
+      description: Returns the approved contact list for a child. Accessible by the child or their parent.
+      security:
+        - childToken: []
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Approved contact list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovedContactList'
+
+  /contacts/{contactId}/permission:
+    patch:
+      tags: [Contacts and Permissions]
+      summary: Update contact permission level
+      description: |
+        Changes the permission level for an approved contact.
+        Same-level changes are rejected with 409.
+        Downgrade requires explicit confirmation in the UI before this call is made.
+        Change is immediate and written to both parent activity logs.
+        Other parent receives a neutral notification.
+        Emits event: `contact.permission.changed`
+      security:
+        - parentToken: []
+      parameters:
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PermissionUpdateRequest'
+      responses:
+        '200':
+          description: Permission updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovedContact'
+        '409':
+          description: New permission level is the same as the current level.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: PERMISSION_UNCHANGED
+                message: The selected permission level is already active for this contact.
+                requestId: req_020
+
+  /contacts/{contactId}:
+    delete:
+      tags: [Contacts and Permissions]
+      summary: Revoke contact
+      description: |
+        Removes an approved contact immediately. No notification is sent to the removed family.
+        Any pending unseen challenges from this contact are removed from the child inbox.
+        Approved contacts graph is updated immediately.
+        Parent activity log records the event for audit.
+        Must not fail silently.
+        Emits event: `contact.revoked`
+      security:
+        - parentToken: []
+      parameters:
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Contact revoked immediately.
+        '404':
+          description: Contact not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /contacts/{contactId}/block:
+    post:
+      tags: [Contacts and Permissions]
+      summary: Block contact permanently
+      description: |
+        Blocks a contact permanently. More absolute than revoke — the contact cannot be
+        re-added without a new contact approval flow. Contact family receives only a neutral
+        neutral connection-removed notification. No reason given.
+        Must not fail silently.
+        Emits event: `contact.blocked`
+      security:
+        - parentToken: []
+      parameters:
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Contact blocked permanently.
+        '404':
+          description: Contact not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ── Safety and Alerts ─────────────────────
+
+  /events/log:
+    post:
+      tags: [Safety and Alerts]
+      summary: Log interaction event
+      description: |
+        Internal endpoint. Logs a child interaction event from MQ or KCP services.
+        Must not fail silently — a failed write must be retried and flagged to engineering.
+        Emits event: `safety.event.logged`
+      security:
+        - internalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionEventLog'
+      responses:
+        '201':
+          description: Event logged.
+        '400':
+          description: Invalid event schema.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /alerts/{parentId}:
+    get:
+      tags: [Safety and Alerts]
+      summary: List alerts for parent
+      description: Returns all alerts for the parent account. Unresolved alerts are always returned first.
+      security:
+        - parentToken: []
+      parameters:
+        - name: parentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, resolved, all]
+            default: all
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Alert list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertList'
+
+  /alerts/{alertId}:
+    get:
+      tags: [Safety and Alerts]
+      summary: Get alert detail
+      description: Returns alert detail and related activity log entries.
+      security:
+        - parentToken: []
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Alert detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '404':
+          description: Alert not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /alerts/{alertId}/resolve:
+    post:
+      tags: [Safety and Alerts]
+      summary: Resolve alert
+      description: |
+        Marks an alert as resolved and records the action taken.
+        Resolved alerts remain visible for 30 days before archiving.
+        Emits event: `alert.resolved`
+      security:
+        - parentToken: []
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertResolveRequest'
+      responses:
+        '200':
+          description: Alert resolved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '409':
+          description: Alert already resolved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: ALERT_ALREADY_RESOLVED
+                message: This alert has already been resolved.
+                requestId: req_021
+
+  /children/{childId}/pause:
+    post:
+      tags: [Safety and Alerts]
+      summary: Pause child account
+      description: |
+        Suspends social and challenge features immediately.
+        Learning features remain active — child can still complete lessons.
+        Must execute immediately and must not fail silently.
+        Emits event: `child.account.paused`
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Child account paused.
+        '409':
+          description: Account already paused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: ACCOUNT_ALREADY_PAUSED
+                message: This child account is already paused.
+                requestId: req_022
+
+  /children/{childId}/resume:
+    post:
+      tags: [Safety and Alerts]
+      summary: Resume child account
+      description: |
+        Reactivates a paused child account. Social and challenge features are restored.
+        Emits event: `child.account.resumed`
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Child account resumed.
+        '409':
+          description: Account is not paused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: ACCOUNT_NOT_PAUSED
+                message: This child account is not currently paused.
+                requestId: req_023
+
+  /activity-log/{childId}:
+    get:
+      tags: [Safety and Alerts]
+      summary: Get child activity log
+      description: |
+        Returns the activity log for a child. Free tier returns the last 7 days.
+        Premium tier returns full history. Entitlement is checked at the API level.
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Activity log.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityLog'
+        '403':
+          description: Premium feature not available on current plan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: PREMIUM_REQUIRED
+                message: Full activity log history requires a premium plan.
+                requestId: req_024
+
+  # ── Learning and Progression ───────────────
+
+  /quest-map/{childId}:
+    get:
+      tags: [Learning and Progression]
+      summary: Get quest map
+      description: Returns the full quest map with unit structure and node states for the child.
+      security:
+        - childToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Quest map returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestMap'
+
+  /lessons/{lessonId}:
+    get:
+      tags: [Learning and Progression]
+      summary: Get lesson
+      description: Returns lesson detail and the full activity sequence.
+      security:
+        - childToken: []
+      parameters:
+        - name: lessonId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lesson detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lesson'
+        '403':
+          description: Lesson is locked for this child.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: LESSON_LOCKED
+                message: This lesson is not yet available for this child.
+                requestId: req_025
+
+  /progress/lesson-complete:
+    post:
+      tags: [Learning and Progression]
+      summary: Record lesson completion
+      description: |
+        Records lesson completion and triggers XP calculation and badge threshold evaluation.
+        Use an idempotency key to prevent duplicate writes on network retry.
+        Emits events: `lesson.completed`, `xp.awarded`, `badge.awarded` (if applicable)
+      security:
+        - childToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LessonCompleteRequest'
+      responses:
+        '200':
+          description: Completion recorded. XP and badge results returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonCompleteResponse'
+        '409':
+          description: Lesson already recorded as complete for this session (idempotency).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: ALREADY_RECORDED
+                message: This lesson completion has already been recorded.
+                requestId: req_026
+
+  /progress/activity-complete:
+    post:
+      tags: [Learning and Progression]
+      summary: Record activity completion
+      description: |
+        Records an individual activity completion with accuracy and retry data.
+        Used to build weak content areas for review loops.
+        Use an idempotency key to prevent duplicate writes.
+        Emits event: `activity.completed`
+      security:
+        - childToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivityCompleteRequest'
+      responses:
+        '204':
+          description: Activity completion recorded.
+
+  /progress/{childId}:
+    get:
+      tags: [Learning and Progression]
+      summary: Get progress summary
+      description: Returns a full progress summary for a child. Accessible by the child or their parent.
+      security:
+        - childToken: []
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Progress summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressSummary'
+
+  /streak/{childId}:
+    get:
+      tags: [Learning and Progression]
+      summary: Get streak status
+      description: Returns current streak, longest streak, and 30-day heatmap history.
+      security:
+        - childToken: []
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Streak status and history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreakStatus'
+
+  /streak/check-absence:
+    post:
+      tags: [Learning and Progression]
+      summary: Check absence and update streak
+      description: |
+        Internal endpoint. Called on app open. Evaluates how long the child has been absent
+        and determines whether the streak is intact or reset.
+        Absence threshold: to be confirmed in open questions.
+        Emits events: `streak.maintained` or `streak.reset`
+      security:
+        - internalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckAbsenceRequest'
+      responses:
+        '200':
+          description: Streak status after absence check.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreakStatus'
+
+  /badges/{childId}:
+    get:
+      tags: [Learning and Progression]
+      summary: Get badges
+      description: Returns earned badges and badges in progress for a child.
+      security:
+        - childToken: []
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Badge list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadgeList'
+
+  /review/{childId}:
+    get:
+      tags: [Learning and Progression]
+      summary: Get review activities
+      description: Returns a list of activities for weak content areas based on retry and error history.
+      security:
+        - childToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Review activity list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReviewActivity'
+
+  # ── Challenges and Recordings ─────────────
+
+  /prompts:
+    get:
+      tags: [Challenges and Recordings]
+      summary: Get preset prompts
+      description: Returns preset prompts available for the current lesson unit. Child token required.
+      security:
+        - childToken: []
+      parameters:
+        - name: unitId
+          in: query
+          schema:
+            type: string
+          description: Filter prompts by lesson unit.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 5
+            maximum: 5
+          description: Maximum 5 prompts shown at once to avoid choice paralysis.
+      responses:
+        '200':
+          description: Preset prompts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PresetPrompt'
+
+  /recordings/upload:
+    post:
+      tags: [Challenges and Recordings]
+      summary: Upload voice recording
+      description: |
+        Uploads a voice recording and returns a recording reference for use in a challenge.
+        Maximum duration: 15 seconds for challenges, 10 seconds for tutorial.
+        Use an idempotency key to prevent duplicate uploads on retry.
+        Recording is not accessible by URL alone — access requires challenge context.
+        Emits event: `recording.uploaded`
+      security:
+        - childToken: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio, childId]
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: Audio file. Accepted formats — m4a, mp4, webm.
+                childId:
+                  type: string
+                durationSeconds:
+                  type: number
+                idempotencyKey:
+                  type: string
+      responses:
+        '201':
+          description: Recording uploaded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingUploadResponse'
+        '422':
+          description: Recording exceeds maximum duration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: RECORDING_TOO_LONG
+                message: Recording must be 15 seconds or less.
+                requestId: req_027
+        '429':
+          description: Rate limit exceeded. Maximum uploads per hour enforced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: RATE_LIMITED
+                message: Too many recording uploads. Please wait before trying again.
+                requestId: req_028
+
+  /challenges:
+    post:
+      tags: [Challenges and Recordings]
+      summary: Create and send challenge
+      description: |
+        Creates a challenge object and delivers it to the recipient child inbox.
+        Permission level is checked against the contact service before the challenge is created.
+        If permission check fails the challenge is silently blocked and the child
+        sees a neutral message. Parent is notified in the background.
+        Use an idempotency key to prevent duplicate challenges on retry.
+        Emits events: `challenge.sent`, `challenge.permission.checked`
+      security:
+        - childToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChallengeCreateRequest'
+      responses:
+        '201':
+          description: Challenge created and delivered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Challenge'
+        '403':
+          description: Contact does not have challenge permission or is blocked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: CHALLENGE_NOT_PERMITTED
+                message: Challenges are not enabled for this contact.
+                requestId: req_029
+
+  /challenges/inbox/{childId}:
+    get:
+      tags: [Challenges and Recordings]
+      summary: Get challenge inbox
+      description: Returns the challenge inbox for a child, newest first.
+      security:
+        - childToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Challenge inbox.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChallengeInbox'
+
+  /challenges/{challengeId}:
+    get:
+      tags: [Challenges and Recordings]
+      summary: Get challenge detail
+      description: |
+        Returns challenge detail including prompt and recording reference.
+        Permission-checked: only the sender child, recipient child, or their parents
+        may access a challenge.
+      security:
+        - childToken: []
+        - parentToken: []
+      parameters:
+        - name: challengeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Challenge detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Challenge'
+        '403':
+          description: Not authorised to access this challenge.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Challenge not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /challenges/{challengeId}/respond:
+    post:
+      tags: [Challenges and Recordings]
+      summary: Respond to challenge
+      description: |
+        Attaches a response recording to the challenge object.
+        The challenge status changes to `responded`.
+        XP is awarded to the responding child.
+        Emits events: `challenge.responded`, `xp.awarded`
+      security:
+        - childToken: []
+      parameters:
+        - name: challengeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChallengeRespondRequest'
+      responses:
+        '200':
+          description: Response recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Challenge'
+        '409':
+          description: Challenge already has a response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: ALREADY_RESPONDED
+                message: This challenge has already been responded to.
+                requestId: req_030
+
+  /challenges/{challengeId}/react:
+    post:
+      tags: [Challenges and Recordings]
+      summary: Send preset reaction
+      description: |
+        Sends a preset reaction to the original challenger on challenge completion.
+        Preset reactions only — no free-form content.
+        Emits event: `challenge.reacted`
+      security:
+        - childToken: []
+      parameters:
+        - name: challengeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChallengeReactRequest'
+      responses:
+        '204':
+          description: Reaction sent.
+        '409':
+          description: Challenge has not been responded to yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: CHALLENGE_NOT_RESPONDED
+                message: A reaction can only be sent after the challenge has been responded to.
+                requestId: req_031
+
+  /recordings/{recordingId}:
+    get:
+      tags: [Challenges and Recordings]
+      summary: Stream recording
+      description: |
+        Streams a voice recording. Access is challenge-scoped — the recording may only be
+        retrieved in the context of its challenge object. A challenge ID must be provided
+        as a query parameter and is permission-checked before the stream is returned.
+        Parent access to recordings is a premium feature gated at the API level.
+        Returns a signed URL valid for 60 seconds.
+      security:
+        - childToken: []
+        - parentToken: []
+      parameters:
+        - name: recordingId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: challengeId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Required. Recording is only accessible within its challenge context.
+      responses:
+        '200':
+          description: Signed URL for the recording. Valid for 60 seconds.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signedUrl:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+        '403':
+          description: Not authorised. Challenge context check failed or premium required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: RECORDING_ACCESS_DENIED
+                message: This recording is not accessible in the current context.
+                requestId: req_032
+        '404':
+          description: Recording not found or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /mic-permission:
+    post:
+      tags: [Challenges and Recordings]
+      summary: Log microphone permission status
+      description: |
+        Logs the microphone permission status for a specific device and child profile.
+        Fires once per device. Used to determine whether to show the permission flow on future sessions.
+      security:
+        - childToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MicPermissionRequest'
+      responses:
+        '204':
+          description: Microphone permission status logged.
+
+  /mic-permission/{childId}:
+    get:
+      tags: [Challenges and Recordings]
+      summary: Get microphone permission status
+      description: Returns current microphone permission state for a child on the calling device.
+      security:
+        - childToken: []
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+          description: Device identifier. If omitted, returns status across all devices.
+      responses:
+        '200':
+          description: Microphone permission status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MicPermissionStatus'
+
+  # ── Analytics ─────────────────────────────
+
+  /events:
+    post:
+      tags: [Analytics]
+      summary: Ingest analytics event
+      description: |
+        Internal endpoint. Ingests events from MQ and KCP services into the shared event bus.
+        Validates event schema and routes to the correct store.
+        Safety-relevant events are forwarded to the Safety and Alerting Service.
+      security:
+        - internalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionEventLog'
+      responses:
+        '204':
+          description: Event ingested.
+        '400':
+          description: Invalid event schema.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /analytics/progress/{childId}:
+    get:
+      tags: [Analytics]
+      summary: Get aggregated progress data
+      description: Returns aggregated progress data for the parent progress review screen.
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Aggregated progress data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressSummary'
+
+  /analytics/dashboard/{childId}:
+    get:
+      tags: [Analytics]
+      summary: Get dashboard headline metrics
+      description: Returns headline metrics for the parent dashboard child card. Optimised for fast load.
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dashboard headline metrics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardMetrics'
+
+  /analytics/speaking/{childId}:
+    get:
+      tags: [Analytics]
+      summary: Get speaking challenge history
+      description: Returns speaking challenge history for the parent progress review screen.
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Speaking challenge history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeakingHistory'
+
+  /analytics/streak/{childId}:
+    get:
+      tags: [Analytics]
+      summary: Get streak history and heatmap
+      description: Returns streak history and heatmap data for the parent progress review screen.
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Streak history and heatmap.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreakStatus'
+
+  /analytics/badges/{childId}:
+    get:
+      tags: [Analytics]
+      summary: Get badge history
+      description: Returns badge history with dates and trigger events for the parent progress review screen.
+      security:
+        - parentToken: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Badge history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadgeHistory'
