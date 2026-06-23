@@ -2,6 +2,9 @@ openapi: 3.1.0
 info:
   title: Maltese Quest V1 API
   version: 1.0.0
+  license:
+    name: Proprietary
+    url: https://maltesequest.com/terms
   description: |
     API specification for Maltese Quest V1 and the Kids Connect Platform layer.
 
@@ -98,8 +101,7 @@ components:
       type: object
       properties:
         nextCursor:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Pass as `cursor` query param to fetch the next page. Null when no more pages.
         hasMore:
           type: boolean
@@ -209,9 +211,8 @@ components:
         consentGiven:
           type: boolean
         consentTimestamp:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
         checkboxStates:
           type: object
           properties:
@@ -267,9 +268,8 @@ components:
           type: string
           example: Europe/Malta
         secondParentEmail:
-          type: string
+          type: [string, 'null']
           format: email
-          nullable: true
           description: Optional. Invites a second parent or guardian to co-manage the household.
 
     Household:
@@ -427,9 +427,8 @@ components:
           type: string
           format: date-time
         permissionChangedAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
         challengesExchanged:
           type: integer
           description: Total challenges sent and received with this contact.
@@ -451,8 +450,7 @@ components:
         permissionLevel:
           $ref: '#/components/schemas/PermissionLevel'
         reason:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Internal note for the audit log. Not shown to other family.
 
     # ── Safety and Alerts ────────────────────
@@ -469,11 +467,9 @@ components:
         childId:
           type: string
         contactId:
-          type: string
-          nullable: true
+          type: [string, 'null']
         deviceId:
-          type: string
-          nullable: true
+          type: [string, 'null']
         sourceService:
           type: string
           enum: [MQ, KCP, SHSYS]
@@ -501,22 +497,19 @@ components:
           type: string
           description: Plain language description. No technical detail.
         contactId:
-          type: string
-          nullable: true
+          type: [string, 'null']
         status:
           type: string
           enum: [open, resolved]
         actionTaken:
-          type: string
-          nullable: true
-          enum: [dismissed, blocked, permission_revoked, account_paused, null]
+          type: [string, 'null']
+          enum: [dismissed, blocked, permission_revoked, account_paused]
         createdAt:
           type: string
           format: date-time
         resolvedAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
 
     AlertList:
       allOf:
@@ -546,8 +539,7 @@ components:
         description:
           type: string
         contactId:
-          type: string
-          nullable: true
+          type: [string, 'null']
         timestamp:
           type: string
           format: date-time
@@ -578,9 +570,8 @@ components:
         isMilestone:
           type: boolean
         completedAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
 
     QuestMap:
       type: object
@@ -616,11 +607,9 @@ components:
           type: string
           description: Reference to audio or image asset.
         promptId:
-          type: string
-          nullable: true
+          type: [string, 'null']
         correctAnswer:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Omitted for speak activities.
 
     Lesson:
@@ -664,13 +653,14 @@ components:
         xpAwarded:
           type: integer
         badgeAwarded:
-          type: object
-          nullable: true
-          properties:
-            badgeId:
-              type: string
-            badgeName:
-              type: string
+          anyOf:
+            - type: object
+              properties:
+                badgeId:
+                  type: string
+                badgeName:
+                  type: string
+            - type: 'null'
         milestoneReached:
           type: boolean
         narrativeUnlocked:
@@ -716,9 +706,8 @@ components:
         badgesEarned:
           type: integer
         lastActiveAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
 
     StreakStatus:
       type: object
@@ -772,9 +761,8 @@ components:
         description:
           type: string
         awardedAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
         inProgress:
           type: boolean
         progressPercent:
@@ -834,9 +822,8 @@ components:
         durationSeconds:
           type: number
         expiresAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
           description: Null until recording retention policy is confirmed.
 
     ChallengeCreateRequest:
@@ -874,21 +861,18 @@ components:
         recordingId:
           type: string
         responseRecordingId:
-          type: string
-          nullable: true
+          type: [string, 'null']
         status:
           type: string
           enum: [pending, responded, reacted]
         reactionType:
-          type: string
-          nullable: true
+          type: [string, 'null']
         createdAt:
           type: string
           format: date-time
         respondedAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
 
     ChallengeInbox:
       allOf:
@@ -936,15 +920,13 @@ components:
         childId:
           type: string
         deviceId:
-          type: string
-          nullable: true
+          type: [string, 'null']
         status:
           type: string
           enum: [granted, denied, not_asked]
         updatedAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
 
     # ── Analytics ────────────────────────────
     DashboardMetrics:
@@ -959,9 +941,8 @@ components:
         totalXP:
           type: integer
         lastActiveAt:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
 
     SpeakingHistory:
       type: object
@@ -1024,6 +1005,7 @@ paths:
     post:
       tags: [Identity and Consent]
       summary: Create parent account
+      operationId: createParentAccount
       description: Creates a parent account and sends a verification email. No child data is collected until consent is recorded.
       security: []
       requestBody:
@@ -1074,6 +1056,7 @@ paths:
     post:
       tags: [Identity and Consent]
       summary: Verify parent email
+      operationId: verifyParentEmail
       description: Confirms the email verification token and activates the parent account.
       security: []
       requestBody:
@@ -1100,6 +1083,7 @@ paths:
     post:
       tags: [Identity and Consent]
       summary: Authenticate parent
+      operationId: authenticateParent
       description: Returns access and refresh tokens on successful authentication.
       security: []
       requestBody:
@@ -1130,6 +1114,7 @@ paths:
     post:
       tags: [Identity and Consent]
       summary: Social sign-in
+      operationId: socialSignin
       description: Signs in or creates an account using a Google or Apple identity token.
       security: []
       requestBody:
@@ -1160,6 +1145,7 @@ paths:
     post:
       tags: [Identity and Consent]
       summary: Record parental consent
+      operationId: recordParentalConsent
       description: |
         Stores the consent record with all four checkbox states, the parent account ID,
         IP address, and timestamp. Child profile activation is blocked until this record exists.
@@ -1200,6 +1186,7 @@ paths:
     get:
       tags: [Identity and Consent]
       summary: Get consent status
+      operationId: getConsentStatus
       description: Returns the current consent state and checkbox values for the authenticated parent account.
       security:
         - parentToken: []
@@ -1210,11 +1197,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConsentStatusResponse'
+        '401':
+          description: Unauthorised.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /auth/child-token:
     post:
       tags: [Identity and Consent]
       summary: Issue child session token
+      operationId: issueChildSessionToken
       description: |
         Issues a child-scoped JWT after PIN verification or parent approval.
         The child token cannot access parent account data.
@@ -1258,6 +1252,7 @@ paths:
     post:
       tags: [Identity and Consent]
       summary: Refresh access token
+      operationId: refreshAccessToken
       description: Rotates the refresh token and returns a new access token. Refresh token is invalidated on use.
       security:
         - refreshToken: []
@@ -1291,6 +1286,7 @@ paths:
     post:
       tags: [Profiles]
       summary: Create household
+      operationId: createHousehold
       description: Creates a household under the authenticated parent account. Requires consent to be recorded first.
       security:
         - parentToken: []
@@ -1322,6 +1318,7 @@ paths:
     get:
       tags: [Profiles]
       summary: Get household
+      operationId: getHousehold
       description: Returns household detail. Parent can only access their own household.
       security:
         - parentToken: []
@@ -1353,6 +1350,7 @@ paths:
     post:
       tags: [Profiles]
       summary: Create child profile
+      operationId: createChildProfile
       description: Creates a child profile under the household. Age band is assigned automatically from the age field.
       security:
         - parentToken: []
@@ -1390,6 +1388,7 @@ paths:
     get:
       tags: [Profiles]
       summary: Get child profile
+      operationId: getChildProfile
       description: Returns child profile detail. Accessible by the parent of the household or the child's own token.
       security:
         - parentToken: []
@@ -1416,6 +1415,7 @@ paths:
     patch:
       tags: [Profiles]
       summary: Update child profile
+      operationId: updateChildProfile
       description: Updates child profile fields. Parent token required.
       security:
         - parentToken: []
@@ -1438,11 +1438,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChildProfile'
+        '401':
+          description: Unauthorised.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /children/{childId}/pin:
     post:
       tags: [Profiles]
       summary: Set child PIN
+      operationId: setChildPIN
       description: Creates or updates the child PIN. PIN is stored as a hash and never returned in plain text.
       security:
         - parentToken: []
@@ -1476,6 +1483,7 @@ paths:
     post:
       tags: [Profiles]
       summary: Verify child PIN
+      operationId: verifyChildPIN
       description: |
         Verifies the child PIN. On success, returns a child session token.
         This endpoint is called by the child login flow. Do not expose the PIN hash.
@@ -1514,6 +1522,7 @@ paths:
     post:
       tags: [Profiles]
       summary: Trigger parent approval login
+      operationId: triggerParentApprovalLogin
       description: Sends a push notification to the parent to approve the child session. Used when no PIN is set.
       security: []
       parameters:
@@ -1525,11 +1534,18 @@ paths:
       responses:
         '204':
           description: Parent approval notification sent.
+        '401':
+          description: Unauthorised.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /children/{childId}/first-time:
     get:
       tags: [Profiles]
       summary: Get first-time flag
+      operationId: getFirsttimeFlag
       description: Returns whether this child profile has completed the first-time experience.
       security:
         - parentToken: []
@@ -1550,9 +1566,16 @@ paths:
                 properties:
                   firstTimeFlag:
                     type: boolean
+        '401':
+          description: Unauthorised.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     delete:
       tags: [Profiles]
       summary: Clear first-time flag
+      operationId: clearFirsttimeFlag
       description: |
         Clears the first-time flag. Must be called only after the child lands on the quest map,
         not before. If the child exits before this point, the introduction sequence must restart.
@@ -1568,6 +1591,12 @@ paths:
       responses:
         '204':
           description: First-time flag cleared.
+        '401':
+          description: Unauthorised.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   # ── Contacts and Permissions ───────────────
 
@@ -1575,6 +1604,7 @@ paths:
     post:
       tags: [Contacts and Permissions]
       summary: Create contact request
+      operationId: createContactRequest
       description: |
         Creates an outbound contact request. The request must be approved by the
         requesting parent before it is sent to the receiving family.
@@ -1610,6 +1640,7 @@ paths:
     get:
       tags: [Contacts and Permissions]
       summary: Get contact request
+      operationId: getContactRequest
       description: Returns contact request detail. Accessible by the requesting or receiving parent.
       security:
         - parentToken: []
@@ -1637,6 +1668,7 @@ paths:
     post:
       tags: [Contacts and Permissions]
       summary: Approve contact request
+      operationId: approveContactRequest
       description: |
         Approves a contact request and sets the initial permission level.
         Updates the approved contacts graph immediately.
@@ -1688,6 +1720,7 @@ paths:
     post:
       tags: [Contacts and Permissions]
       summary: Reject contact request
+      operationId: rejectContactRequest
       description: |
         Rejects a contact request. The requesting family receives only a neutral
         non-acceptance message. No reason is shared. The requesting child is not notified.
@@ -1710,10 +1743,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /contacts/{childId}:
+  /children/{childId}/contacts:
     get:
       tags: [Contacts and Permissions]
       summary: Get approved contacts
+      operationId: getApprovedContacts
       description: Returns the approved contact list for a child. Accessible by the child or their parent.
       security:
         - childToken: []
@@ -1740,11 +1774,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApprovedContactList'
+        '401':
+          description: Unauthorised.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /contacts/{contactId}/permission:
     patch:
       tags: [Contacts and Permissions]
       summary: Update contact permission level
+      operationId: updateContactPermissionLevel
       description: |
         Changes the permission level for an approved contact.
         Same-level changes are rejected with 409.
@@ -1788,6 +1829,7 @@ paths:
     delete:
       tags: [Contacts and Permissions]
       summary: Revoke contact
+      operationId: revokeContact
       description: |
         Removes an approved contact immediately. No notification is sent to the removed family.
         Any pending unseen challenges from this contact are removed from the child inbox.
@@ -1817,6 +1859,7 @@ paths:
     post:
       tags: [Contacts and Permissions]
       summary: Block contact permanently
+      operationId: blockContactPermanently
       description: |
         Blocks a contact permanently. More absolute than revoke — the contact cannot be
         re-added without a new contact approval flow. Contact family receives only a neutral
@@ -1847,6 +1890,7 @@ paths:
     post:
       tags: [Safety and Alerts]
       summary: Log interaction event
+      operationId: logInteractionEvent
       description: |
         Internal endpoint. Logs a child interaction event from MQ or KCP services.
         Must not fail silently — a failed write must be retried and flagged to engineering.
@@ -1869,10 +1913,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /alerts/{parentId}:
+  /parents/{parentId}/alerts:
     get:
       tags: [Safety and Alerts]
       summary: List alerts for parent
+      operationId: listAlertsForParent
       description: Returns all alerts for the parent account. Unresolved alerts are always returned first.
       security:
         - parentToken: []
@@ -1904,11 +1949,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AlertList'
+        '401':
+          description: Unauthorised.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /alerts/{alertId}:
     get:
       tags: [Safety and Alerts]
       summary: Get alert detail
+      operationId: getAlertDetail
       description: Returns alert detail and related activity log entries.
       security:
         - parentToken: []
@@ -1936,6 +1988,7 @@ paths:
     post:
       tags: [Safety and Alerts]
       summary: Resolve alert
+      operationId: resolveAlert
       description: |
         Marks an alert as resolved and records the action taken.
         Resolved alerts remain visible for 30 days before archiving.
@@ -1976,6 +2029,7 @@ paths:
     post:
       tags: [Safety and Alerts]
       summary: Pause child account
+      operationId: pauseChildAccount
       description: |
         Suspends social and challenge features immediately.
         Learning features remain active — child can still complete lessons.
@@ -2007,6 +2061,7 @@ paths:
     post:
       tags: [Safety and Alerts]
       summary: Resume child account
+      operationId: resumeChildAccount
       description: |
         Reactivates a paused child account. Social and challenge features are restored.
         Emits event: `child.account.resumed`
@@ -2036,6 +2091,7 @@ paths:
     get:
       tags: [Safety and Alerts]
       summary: Get child activity log
+      operationId: getChildActivityLog
       description: |
         Returns the activity log for a child. Free tier returns the last 7 days.
         Premium tier returns full history. Entitlement is checked at the API level.
@@ -2080,6 +2136,7 @@ paths:
     get:
       tags: [Learning and Progression]
       summary: Get quest map
+      operationId: getQuestMap
       description: Returns the full quest map with unit structure and node states for the child.
       security:
         - childToken: []
@@ -2101,6 +2158,7 @@ paths:
     get:
       tags: [Learning and Progression]
       summary: Get lesson
+      operationId: getLesson
       description: Returns lesson detail and the full activity sequence.
       security:
         - childToken: []
@@ -2132,6 +2190,7 @@ paths:
     post:
       tags: [Learning and Progression]
       summary: Record lesson completion
+      operationId: recordLessonCompletion
       description: |
         Records lesson completion and triggers XP calculation and badge threshold evaluation.
         Use an idempotency key to prevent duplicate writes on network retry.
@@ -2166,6 +2225,7 @@ paths:
     post:
       tags: [Learning and Progression]
       summary: Record activity completion
+      operationId: recordActivityCompletion
       description: |
         Records an individual activity completion with accuracy and retry data.
         Used to build weak content areas for review loops.
@@ -2187,6 +2247,7 @@ paths:
     get:
       tags: [Learning and Progression]
       summary: Get progress summary
+      operationId: getProgressSummary
       description: Returns a full progress summary for a child. Accessible by the child or their parent.
       security:
         - childToken: []
@@ -2209,6 +2270,7 @@ paths:
     get:
       tags: [Learning and Progression]
       summary: Get streak status
+      operationId: getStreakStatus
       description: Returns current streak, longest streak, and 30-day heatmap history.
       security:
         - childToken: []
@@ -2231,6 +2293,7 @@ paths:
     post:
       tags: [Learning and Progression]
       summary: Check absence and update streak
+      operationId: checkAbsenceAndUpdateStreak
       description: |
         Internal endpoint. Called on app open. Evaluates how long the child has been absent
         and determines whether the streak is intact or reset.
@@ -2256,6 +2319,7 @@ paths:
     get:
       tags: [Learning and Progression]
       summary: Get badges
+      operationId: getBadges
       description: Returns earned badges and badges in progress for a child.
       security:
         - childToken: []
@@ -2278,6 +2342,7 @@ paths:
     get:
       tags: [Learning and Progression]
       summary: Get review activities
+      operationId: getReviewActivities
       description: Returns a list of activities for weak content areas based on retry and error history.
       security:
         - childToken: []
@@ -2308,6 +2373,7 @@ paths:
     get:
       tags: [Challenges and Recordings]
       summary: Get preset prompts
+      operationId: getPresetPrompts
       description: Returns preset prompts available for the current lesson unit. Child token required.
       security:
         - childToken: []
@@ -2338,6 +2404,7 @@ paths:
     post:
       tags: [Challenges and Recordings]
       summary: Upload voice recording
+      operationId: uploadVoiceRecording
       description: |
         Uploads a voice recording and returns a recording reference for use in a challenge.
         Maximum duration: 15 seconds for challenges, 10 seconds for tutorial.
@@ -2396,6 +2463,7 @@ paths:
     post:
       tags: [Challenges and Recordings]
       summary: Create and send challenge
+      operationId: createAndSendChallenge
       description: |
         Creates a challenge object and delivers it to the recipient child inbox.
         Permission level is checked against the contact service before the challenge is created.
@@ -2433,6 +2501,7 @@ paths:
     get:
       tags: [Challenges and Recordings]
       summary: Get challenge inbox
+      operationId: getChallengeInbox
       description: Returns the challenge inbox for a child, newest first.
       security:
         - childToken: []
@@ -2463,6 +2532,7 @@ paths:
     get:
       tags: [Challenges and Recordings]
       summary: Get challenge detail
+      operationId: getChallengeDetail
       description: |
         Returns challenge detail including prompt and recording reference.
         Permission-checked: only the sender child, recipient child, or their parents
@@ -2500,6 +2570,7 @@ paths:
     post:
       tags: [Challenges and Recordings]
       summary: Respond to challenge
+      operationId: respondToChallenge
       description: |
         Attaches a response recording to the challenge object.
         The challenge status changes to `responded`.
@@ -2541,6 +2612,7 @@ paths:
     post:
       tags: [Challenges and Recordings]
       summary: Send preset reaction
+      operationId: sendPresetReaction
       description: |
         Sends a preset reaction to the original challenger on challenge completion.
         Preset reactions only — no free-form content.
@@ -2577,6 +2649,7 @@ paths:
     get:
       tags: [Challenges and Recordings]
       summary: Stream recording
+      operationId: streamRecording
       description: |
         Streams a voice recording. Access is challenge-scoped — the recording may only be
         retrieved in the context of its challenge object. A challenge ID must be provided
@@ -2632,6 +2705,7 @@ paths:
     post:
       tags: [Challenges and Recordings]
       summary: Log microphone permission status
+      operationId: logMicrophonePermissionStatus
       description: |
         Logs the microphone permission status for a specific device and child profile.
         Fires once per device. Used to determine whether to show the permission flow on future sessions.
@@ -2651,6 +2725,7 @@ paths:
     get:
       tags: [Challenges and Recordings]
       summary: Get microphone permission status
+      operationId: getMicrophonePermissionStatus
       description: Returns current microphone permission state for a child on the calling device.
       security:
         - childToken: []
@@ -2680,6 +2755,7 @@ paths:
     post:
       tags: [Analytics]
       summary: Ingest analytics event
+      operationId: ingestAnalyticsEvent
       description: |
         Internal endpoint. Ingests events from MQ and KCP services into the shared event bus.
         Validates event schema and routes to the correct store.
@@ -2706,6 +2782,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Get aggregated progress data
+      operationId: getAggregatedProgressData
       description: Returns aggregated progress data for the parent progress review screen.
       security:
         - parentToken: []
@@ -2727,6 +2804,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Get dashboard headline metrics
+      operationId: getDashboardHeadlineMetrics
       description: Returns headline metrics for the parent dashboard child card. Optimised for fast load.
       security:
         - parentToken: []
@@ -2748,6 +2826,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Get speaking challenge history
+      operationId: getSpeakingChallengeHistory
       description: Returns speaking challenge history for the parent progress review screen.
       security:
         - parentToken: []
@@ -2769,6 +2848,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Get streak history and heatmap
+      operationId: getStreakHistoryAndHeatmap
       description: Returns streak history and heatmap data for the parent progress review screen.
       security:
         - parentToken: []
@@ -2790,6 +2870,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Get badge history
+      operationId: getBadgeHistory
       description: Returns badge history with dates and trigger events for the parent progress review screen.
       security:
         - parentToken: []
@@ -2806,3 +2887,4 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BadgeHistory'
+
